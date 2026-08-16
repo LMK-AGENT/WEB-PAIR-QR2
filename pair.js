@@ -1,133 +1,242 @@
-const PastebinAPI = require('pastebin-js');
-const pastebin = new PastebinAPI('EMWTMkQAVfJa9kM-MRUrxd5Oku1U7pgL');
-const { makeid, uploadSessionToMega, createBase64Session } = require('./id'); // ← Updated import
-const express = require('express');
-const fs = require('fs');
-let router = express.Router();
-const pino = require("pino");
+const express = require('node:express');
+const fs = require('node:fs');
+const path = require('node:path');
+const pino = require('pino');
+
 const {
-    default: Arslan_Tech,
+    default: makeWASocket,
     useMultiFileAuthState,
-    delay,
     makeCacheableSignalKeyStore,
-    Browsers
+    Browsers,
+    delay
 } = require('@whiskeysockets/baileys');
 
-function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return false;
-    fs.rmSync(FilePath, { recursive: true, force: true });
+const { makeid, createBase64Session } = require('./id');
+
+const router = express.Router();
+
+const TEMP_ROOT = path.join(__dirname, '.temp');
+fs.mkdirSync(TEMP_ROOT, { recursive: true });
+
+function removeFile(filePath) {
+    try {
+        fs.rmSync(filePath, {
+            recursive: true,
+            force: true
+        });
+    } catch (error) {
+        console.error('Temporary file cleanup failed:', error.message);
+    }
+}
+
+function normalizeNumber(value) {
+    return String(value || '').replace(/\D/g, '');
 }
 
 router.get('/', async (req, res) => {
     const id = makeid();
-    let num = req.query.number;
-    
-    async function Arslan_MD_PAIR_CODE() {
-        const { state, saveCreds } = await useMultiFileAuthState('./temp/' + id);
-        try {
-            let Pair_Code_By_Arslan_Tech = Arslan_Tech({
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
-                },
-                printQRInTerminal: false,
-                logger: pino({ level: 'fatal' }).child({ level: 'fatal' }),
-                browser: Browsers.macOS('Chrome')
-            });
+    const sessionDir = path.join(TEMP_ROOT, id);
 
-            if (!Pair_Code_By_Arslan_Tech.authState.creds.registered) {
-                await delay(1500);
-                num = num.replace(/[^0-9]/g, '');
-                const code = await Pair_Code_By_Arslan_Tech.requestPairingCode(num);
-                if (!res.headersSent) {
-                    await res.send({ code });
-                }
+    let socket;
+
+    const number = normalizeNumber(req.query.number);
+
+    if (!number || number.length < 7 || number.length > 15) {
+        return res.status(400).json({
+            error: 'Enter a valid WhatsApp number in international format without +, spaces, or hyphens.'
+        });
+    }
+
+    try {
+        fs.mkdirSync(sessionDir, { recursive: true });
+
+        const {
+            state,
+            saveCreds
+        } = await useMultiFileAuthState(sessionDir);
+
+        socket = makeWASocket({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(
+                    state.keys,
+                    pino({ level: 'silent' })
+                )
+            },
+
+            printQRInTerminal: false,
+
+            logger: pino({
+                level: 'silent'
+            }),
+
+            browser: Browsers.macOS('Chrome'),
+
+            markOnlineOnConnect: false,
+
+            syncFullHistory: false
+        });
+
+        socket.ev.on('creds.update', saveCreds);
+
+        /*
+         * Pairing-code authentication
+         */
+        if (!state.creds.registered) {
+            await delay(1500);
+
+            const code = await socket.requestPairingCode(number);
+
+            if (!res.headersSent) {
+                return res.json({
+                    success: true,
+                    code,
+                    message:
+                        'Open WhatsApp → Linked Devices → Link with phone number, then enter this code.'
+                });
             }
+        }
 
-            Pair_Code_By_Arslan_Tech.ev.on('creds.update', saveCreds);
-            Pair_Code_By_Arslan_Tech.ev.on('connection.update', async (s) => {
-                const { connection, lastDisconnect } = s;
-                if (connection === 'open') {
-                    await delay(5000);
-                    
-                    const credsPath = __dirname + `/temp/${id}/creds.json`;
-                    
-                    // ← NEW: Try MEGA first, fallback to base64
-                    // Replace this:
+        /*
+         * WhatsApp connection state
+         */
+        socket.ev.on('connection.update', async (update) => {
+            const {
+                connection,
+                lastDisconnect
+            } = update;
 
-                    let sessionText = await uploadSessionToMega(credsPath, `creds-${id}.json`);
+            /*
+             * Authentication succeeded
+             */
+            if (connection === 'open') {
+                try {
+                    console.log(`[PAIR] WhatsApp connected: ${id}`);
 
-                    let session = await Pair_Code_By_Arslan_Tech.sendMessage(
-                        Pair_Code_By_Arslan_Tech.user.id, 
-                        { text: sessionText }
-                    );
+                    /*
+                     * Give Baileys time to finish writing
+                     * the authentication state.
+                     */
+                    await delay(3000);
 
-                    let Arslan_MD_TEXT = `
+                    /*
+                     * Convert the COMPLETE multi-file
+                     * authentication state into Base64.
+                     */
+                    const sessionText =
+                        await createBase64Session(sessionDir);
+
+                    const jid = socket.user?.id;
+
+                    if (jid) {
+                        const message = `
 ╔════════════════════◇
 ║ 『 SESSION CONNECTED 』
 ║ ⚡ LMK-AGENT002-MD ⚡
-║ 🔷 OFFICIAL INSTANCE 🔷
 ╚════════════════════╝
 
-╔════════════════════◇
-║ 『 SYSTEM STATUS 』
-║ ✔ Connection: Stable
-║ ✔ Bot: Online & Active
-║ ✔ Mode: Fully Operational
-╚════════════════════╝
+Your Base64 SESSION_ID:
 
-╔════════════════════◇
-║ 『 DEPLOYMENT INFO 』
-║ • Set your SESSION_ID in Heroku
-║ • Keep it secure, don't leak it
-╚════════════════════╝
+${sessionText}
 
-╔════════════════════◇
-║ 『 CONNECT & SUPPORT 』
-║ ▶ YouTube:
-║ youtube.com/@lmkagent
-║
-║ ▶ Owner:
-║ http://wa.me//0604707015
-║
-║ ▶ GitHub Repo:
-║ https://github.com/LMK360/LMK-AGENT002-MD-BOT-
-║
-║ ▶ WhatsApp Channel:
-║ https://whatsapp.com/channel/0029Vb7LwaM7dmeTaTNO6Y2u
-╚════════════════════╝
+━━━━━━━━━━━━━━━━━━━━
 
-╔════════════════════◇
-║ 『 POWERED BY 』
-║ ⚡ LMK-AGENT002-MD ⚡
-║ Automation • Control • Precision
-╚════════════════════╝
+Keep this SESSION_ID private.
 
-✨ Stay connected. Stay ahead.
+Anyone who obtains it may be able to
+authenticate the bot.
 
-⭐ Don't forget to star the repo.
-______________________________`;
+Paste it into the bot's SESSION_ID
+environment variable.
 
-                    await Pair_Code_By_Arslan_Tech.sendMessage(Pair_Code_By_Arslan_Tech.user.id, { text: Arslan_MD_TEXT }, { quoted: session });
+━━━━━━━━━━━━━━━━━━━━
 
-                    await delay(100);
-                    await Pair_Code_By_Arslan_Tech.ws.close();
-                    return await removeFile('./temp/' + id);
-                } else if (connection === 'close' && lastDisconnect && lastDisconnect.error && lastDisconnect.error.output.statusCode != 401) {
-                    await delay(10000);
-                    Arslan_MD_PAIR_CODE();
+✅ WhatsApp device linked
+✅ Authentication saved
+✅ Base64 session generated
+`;
+
+                        await socket.sendMessage(
+                            jid,
+                            {
+                                text: message
+                            }
+                        );
+
+                        console.log(
+                            `[PAIR] Base64 session sent successfully: ${id}`
+                        );
+                    } else {
+                        console.error(
+                            `[PAIR] Connected but WhatsApp JID was unavailable: ${id}`
+                        );
+                    }
+
+                } catch (error) {
+                    console.error(
+                        '[PAIR] Session generation failed:',
+                        error
+                    );
+
+                } finally {
+
+                    /*
+                     * Give the message time to leave before
+                     * destroying the temporary authentication state.
+                     */
+                    setTimeout(() => {
+
+                        try {
+                            if (socket) {
+                                socket.end(undefined);
+                            }
+                        } catch {}
+
+                        removeFile(sessionDir);
+
+                        console.log(
+                            `[PAIR] Temporary authentication removed: ${id}`
+                        );
+
+                    }, 3000);
                 }
-            });
-        } catch (err) {
-            console.log('Service restarted');
-            await removeFile('./temp/' + id);
-            if (!res.headersSent) {
-                await res.send({ code: 'Service Currently Unavailable' });
             }
+
+            /*
+             * Connection closed
+             */
+            if (connection === 'close') {
+
+                const statusCode =
+                    lastDisconnect?.error?.output?.statusCode;
+
+                console.error(
+                    `[PAIR] WhatsApp connection closed: ${statusCode || 'unknown'}`
+                );
+
+                /*
+                 * Only clean up here if authentication did not
+                 * successfully finish.
+                 */
+                removeFile(sessionDir);
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            '[PAIR] Pairing request failed:',
+            error
+        );
+
+        removeFile(sessionDir);
+
+        if (!res.headersSent) {
+            return res.status(500).json({
+                error: 'Pairing service is currently unavailable.'
+            });
         }
     }
-    
-    return await Arslan_MD_PAIR_CODE();
 });
 
 module.exports = router;
