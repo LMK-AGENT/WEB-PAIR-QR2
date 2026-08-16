@@ -254,9 +254,7 @@ environment variable.
                                 try {
 
                                     if (socket) {
-                                        socket.end(
-                                            undefined
-                                        );
+                                        socket.end();
                                     }
 
                                 } catch {}
