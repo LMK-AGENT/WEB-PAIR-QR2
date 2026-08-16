@@ -1,6 +1,6 @@
-const express = require('node:express');
-const fs = require('node:fs');
-const path = require('node:path');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const pino = require('pino');
 
 const {
@@ -188,7 +188,7 @@ environment variable.
 
                         try {
                             if (socket) {
-                                socket.end(undefined);
+                                socket.end();
                             }
                         } catch {}
 
